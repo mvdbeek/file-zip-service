@@ -1,4 +1,4 @@
-use actix_web::{get, web, App, HttpServer, Responder, HttpResponse};
+use actix_web::{get, web, App, HttpServer, Responder, HttpResponse, HttpRequest};
 use clap::{App as ClapApp, Arg};
 use serde::{Deserialize, Serialize};
 use std::fs::File;
@@ -71,8 +71,16 @@ fn parse_command_line_args() -> Config {
 }
 
 
+
+
 #[get("/download")]
-async fn download_files(req_body: web::Json<Vec<FileRequest>>) -> impl Responder {
+async fn download_files(_req: HttpRequest, req_body: web::Json<Vec<FileRequest>>) -> impl Responder {
+    download_files_handler(req_body).await
+}
+
+
+
+async fn download_files_handler(req_body: web::Json<Vec<FileRequest>>) -> HttpResponse {
     // List of file paths to include in the zip archive
 
     // Create a buffer to store the zip archive
@@ -107,6 +115,7 @@ async fn download_files(req_body: web::Json<Vec<FileRequest>>) -> impl Responder
         .body(response)
 }
 
+
 #[actix_web::main]
 async fn main() -> std::io::Result<()> {
     let config = parse_command_line_args();
@@ -118,4 +127,45 @@ async fn main() -> std::io::Result<()> {
     .workers(config.workers)
     .run()
     .await
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use actix_web::http::StatusCode;
+    use actix_web::test;
+    use serde_json::json;
+    use std::io::Write;
+    use tempfile::tempdir;
+
+
+    #[actix_rt::test]
+    async fn test_create_zip_archive() {
+        // Arrange: Create temporary files and directories
+        let dir = tempdir().expect("Failed to create temporary directory");
+        let file1_path = dir.path().join("file1.txt");
+        let file2_path = dir.path().join("file2.txt");
+
+        let mut file1 = std::fs::File::create(&file1_path).expect("Failed to create file1.txt");
+        file1.write_all(b"Content of file1.txt").expect("Failed to write to file1.txt");
+
+        let mut file2 = std::fs::File::create(&file2_path).expect("Failed to create file2.txt");
+        file2.write_all(b"Content of file2.txt").expect("Failed to write to file2.txt");
+
+        // JSON request body with temporary file paths
+        let json_body = json!([
+            {"path": file1_path.to_str().unwrap(), "arcname": "dir/file1.txt"},
+            {"path": file2_path.to_str().unwrap(), "arcname": "dir/file2.txt"}
+        ]);
+
+        // Act: Send POST request to /download endpoint
+        let app = test::init_service(App::new().service(web::resource("/download").route(web::post().to(download_files_handler)))).await;
+        let request = test::TestRequest::post().uri("/download").set_json(&json_body).to_request();
+        let response: HttpResponse = test::call_service(&app, request).await.into();
+
+        // Assert: Check the response status code
+        assert_eq!(response.status(), StatusCode::OK);
+
+        // Clean up: Temporary files and directories will be deleted automatically when they go out of scope
+    }
 }
