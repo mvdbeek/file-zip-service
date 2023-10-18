@@ -1,4 +1,5 @@
 use actix_web::{get, web, App, HttpServer, Responder, HttpResponse};
+use clap::{App as ClapApp, Arg};
 use serde::{Deserialize, Serialize};
 use std::fs::File;
 use std::io::Read;
@@ -10,6 +11,63 @@ use zip::{write::FileOptions, ZipWriter};
 struct FileRequest {
     path: String,
     arcname: String,
+}
+
+
+struct Config {
+    host: String,
+    port: u16,
+    workers: usize,
+}
+
+fn parse_command_line_args() -> Config {
+    let matches = ClapApp::new("File Zip Service")
+        .version("1.0")
+        .author("Your Name")
+        .about("Creates a zip archive from specified files.")
+        .arg(
+            Arg::with_name("host")
+                .short('h')
+                .long("host")
+                .value_name("HOST")
+                .help("Sets the server host")
+                .takes_value(true)
+                .default_value("0.0.0.0"),
+        )
+        .arg(
+            Arg::with_name("port")
+                .short('p')
+                .long("port")
+                .value_name("PORT")
+                .help("Sets the server port")
+                .takes_value(true)
+                .default_value("8080"),
+        )
+        .arg(
+            Arg::with_name("workers")
+                .short('w')
+                .long("workers")
+                .value_name("NUM")
+                .help("Sets the number of worker threads")
+                .takes_value(true)
+                .default_value("4"),
+        )
+        .get_matches();
+
+    // Extract the host, port, and workers value from command line arguments
+    let host = matches.value_of("host").unwrap_or("0.0.0.0").to_string();
+    let port: u16 = matches
+        .value_of("port")
+        .unwrap_or("8080")
+        .parse()
+        .expect("Invalid port number");
+    let workers = matches
+        .value_of("workers")
+        .unwrap_or("4")
+        .parse()
+        .expect("Invalid number of workers");
+
+    Config { host, port, workers }
 }
 
 
@@ -51,10 +109,13 @@ async fn download_files(req_body: web::Json<Vec<FileRequest>>) -> impl Responder
 
 #[actix_web::main]
 async fn main() -> std::io::Result<()> {
+    let config = parse_command_line_args();
+
     HttpServer::new(|| {
         App::new().service(download_files)
     })
-    .bind("127.0.0.1:8088")?
+    .bind(format!("{}:{}", config.host, config.port))?
+    .workers(config.workers)
     .run()
     .await
 }
